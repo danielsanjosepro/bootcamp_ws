@@ -21,6 +21,22 @@ from tf2_ros import (
 )
 from scipy.spatial.transform import Rotation as R
 
+RIGHT_ROBOT_ROTATION = R.from_matrix(
+    [
+        [0.88057351, -0.40157173, 0.25165539],
+        [0.44095002, 0.4996947, -0.74556575],
+        [0.17364727, 0.7674929, 0.61709097],
+    ]
+)
+
+LEFT_ROBOT_ROTATION = R.from_matrix(
+    [
+        [0.88057351, 0.40157173, 0.25165539],
+        [-0.44095002, 0.4996947, 0.74556575],
+        [0.17364727, -0.7674929, 0.61709097],
+    ]
+)
+
 
 class Pose:
     """A pose representation with translation and rotation."""
@@ -200,7 +216,9 @@ class MetaQuest3Publisher(Node):
         self._max_angular_vel = 1.0  # rad/s - maximum angular velocity
 
         # Control flags
-        self._enable_orientation_control = False  # Set to True to enable orientation control
+        self._enable_orientation_control = (
+            False  # Set to True to enable orientation control
+        )
 
         # Axis flip for coordinate alignment (1.0 = same direction, -1.0 = opposite)
         self._axis_flip = np.array([1.0, -1.0, -1.0])  # [x, y, z] - flip y and z axes
@@ -291,16 +309,23 @@ class MetaQuest3Publisher(Node):
             error_derivative_rot = np.zeros(3)
 
         # Apply PD control law (all in base frame)
-        linear_command = self._kp_linear * error_trans + self._kd_linear * error_derivative_trans
+        linear_command = (
+            self._kp_linear * error_trans + self._kd_linear * error_derivative_trans
+        )
 
         if self._enable_orientation_control:
-            angular_command = self._kp_angular * error_rot.as_rotvec() + self._kd_angular * error_derivative_rot
+            angular_command = (
+                self._kp_angular * error_rot.as_rotvec()
+                + self._kd_angular * error_derivative_rot
+            )
         else:
             angular_command = np.zeros(3)  # Disable orientation control
 
         # Saturate velocities for safety
         linear_command = self._saturate_velocity(linear_command, self._max_linear_vel)
-        angular_command = self._saturate_velocity(angular_command, self._max_angular_vel)
+        angular_command = self._saturate_velocity(
+            angular_command, self._max_angular_vel
+        )
 
         # Populate twist message
         twist.twist.linear.x = linear_command[0]
@@ -318,21 +343,9 @@ class MetaQuest3Publisher(Node):
         twist.header.frame_id = f"{side}_link0"
 
         if side == "left":
-            rotation = np.array(
-                [
-                    [0.88057351, 0.40157173, 0.25165539],
-                    [-0.44095002, 0.4996947, 0.74556575],
-                    [0.17364727, -0.7674929, 0.61709097],
-                ]
-            )
+            rotation = LEFT_ROBOT_ROTATION.as_matrix()
         elif side == "right":
-            rotation = np.array(
-                [
-                    [0.88057351, -0.40157173, 0.25165539],
-                    [0.44095002, 0.4996947, -0.74556575],
-                    [0.17364727, 0.7674929, 0.61709097],
-                ]
-            )
+            rotation = RIGHT_ROBOT_ROTATION.as_matrix()
         else:
             raise ValueError("The side is not valid, either left or right.")
 
@@ -402,7 +415,11 @@ class MetaQuest3Publisher(Node):
         if hand_trigger > 0.7:
             # Capture reference poses when first pressed
             # Check instance variable directly to avoid local variable bug
-            is_active = self._teleop_active_left if side == self._left_arm_side else self._teleop_active_right
+            is_active = (
+                self._teleop_active_left
+                if side == self._left_arm_side
+                else self._teleop_active_right
+            )
 
             if not is_active:
                 # Get controller pose from input data
@@ -413,15 +430,14 @@ class MetaQuest3Publisher(Node):
                 )
 
                 # Get robot pose from TF
-                latest_robot_pose = self._latest_pose_left if side == self._left_arm_side else self._latest_pose_right
+                latest_robot_pose = (
+                    self._latest_pose_left
+                    if side == self._left_arm_side
+                    else self._latest_pose_right
+                )
 
                 if latest_robot_pose is not None:
                     robot_ref_pose = Pose.from_transform_msg(latest_robot_pose)
-
-                    # Apply coordinate transformation for controller pose
-                    controller_ref_pose = self._transform_controller_pose(
-                        controller_ref_pose, side
-                    )
 
                     # Store references
                     if side == self._left_arm_side:
@@ -446,21 +462,32 @@ class MetaQuest3Publisher(Node):
 
             # Compute and send twist command
             # Read instance variables directly
-            is_active = self._teleop_active_left if side == self._left_arm_side else self._teleop_active_right
-            controller_ref_pose = self._controller_ref_pose_left if side == self._left_arm_side else self._controller_ref_pose_right
-            robot_ref_pose = self._robot_ref_pose_left if side == self._left_arm_side else self._robot_ref_pose_right
+            is_active = (
+                self._teleop_active_left
+                if side == self._left_arm_side
+                else self._teleop_active_right
+            )
+            controller_ref_pose = (
+                self._controller_ref_pose_left
+                if side == self._left_arm_side
+                else self._controller_ref_pose_right
+            )
+            robot_ref_pose = (
+                self._robot_ref_pose_left
+                if side == self._left_arm_side
+                else self._robot_ref_pose_right
+            )
 
-            if is_active and controller_ref_pose is not None and robot_ref_pose is not None:
+            if (
+                is_active
+                and controller_ref_pose is not None
+                and robot_ref_pose is not None
+            ):
                 # Get current controller pose
                 controller_pos = input_data[side]["pos"]
                 controller_quat = input_data[side]["rot"]
                 current_controller_pose = Pose.from_pos_quat(
                     controller_pos, controller_quat
-                )
-
-                # Apply coordinate transformation
-                current_controller_pose = self._transform_controller_pose(
-                    current_controller_pose, side
                 )
 
                 # Compute relative transform from reference
@@ -470,16 +497,34 @@ class MetaQuest3Publisher(Node):
                 target_robot_pose = robot_ref_pose + delta_controller
 
                 # Get current robot pose
-                latest_robot_pose = self._latest_pose_left if side == self._left_arm_side else self._latest_pose_right
-                prev_error = self._prev_error_left if side == self._left_arm_side else self._prev_error_right
-                prev_time = self._prev_time_left if side == self._left_arm_side else self._prev_time_right
+                latest_robot_pose = (
+                    self._latest_pose_left
+                    if side == self._left_arm_side
+                    else self._latest_pose_right
+                )
+                prev_error = (
+                    self._prev_error_left
+                    if side == self._left_arm_side
+                    else self._prev_error_right
+                )
+                prev_time = (
+                    self._prev_time_left
+                    if side == self._left_arm_side
+                    else self._prev_time_right
+                )
 
                 if latest_robot_pose is not None:
                     current_robot_pose = Pose.from_transform_msg(latest_robot_pose)
 
                     # Compute twist using PD controller
-                    twist, error_pose, current_time = self.compute_twist_from_pose_error(
-                        target_robot_pose, current_robot_pose, prev_error, prev_time, side
+                    twist, error_pose, current_time = (
+                        self.compute_twist_from_pose_error(
+                            target_robot_pose,
+                            current_robot_pose,
+                            prev_error,
+                            prev_time,
+                            side,
+                        )
                     )
 
                     # Update previous error and time
@@ -500,7 +545,11 @@ class MetaQuest3Publisher(Node):
                     )
         else:
             # Hand trigger released - reset teleop state and send zero twist
-            is_active = self._teleop_active_left if side == self._left_arm_side else self._teleop_active_right
+            is_active = (
+                self._teleop_active_left
+                if side == self._left_arm_side
+                else self._teleop_active_right
+            )
 
             if is_active:
                 if side == self._left_arm_side:
@@ -529,50 +578,6 @@ class MetaQuest3Publisher(Node):
             zero_twist.twist.angular.y = 0.0
             zero_twist.twist.angular.z = 0.0
             publisher.publish(zero_twist)
-
-    def _transform_controller_pose(self, controller_pose, side):
-        """
-        Transform controller pose using the coordinate transformation matrix.
-
-        Args:
-            controller_pose: Pose object from controller
-            side: "left" or "right"
-
-        Returns:
-            Pose: Transformed pose
-        """
-        # Use the same rotation matrices as in the original convert_twist method
-        if side == "left":
-            rotation_matrix = np.array(
-                [
-                    [0.88057351, 0.40157173, 0.25165539],
-                    [-0.44095002, 0.4996947, 0.74556575],
-                    [0.17364727, -0.7674929, 0.61709097],
-                ]
-            )
-        elif side == "right":
-            rotation_matrix = np.array(
-                [
-                    [0.88057351, -0.40157173, 0.25165539],
-                    [0.44095002, 0.4996947, -0.74556575],
-                    [0.17364727, 0.7674929, 0.61709097],
-                ]
-            )
-        else:
-            raise ValueError("The side is not valid, either left or right.")
-
-        # Transform translation
-        transformed_trans = np.dot(rotation_matrix.T, controller_pose.translation)
-
-        # Apply axis flip to correct coordinate alignment
-        transformed_trans = self._axis_flip * transformed_trans
-
-        # Transform rotation
-        # Convert rotation matrix to scipy Rotation
-        coord_transform_rot = R.from_matrix(rotation_matrix.T)
-        transformed_rot = coord_transform_rot * controller_pose.rotation
-
-        return Pose(transformed_trans, transformed_rot)
 
     def _callback_get_latest_tf(self):
         """Callback to get the latest TF transforms for left and right arms."""
