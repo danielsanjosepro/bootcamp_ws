@@ -36,6 +36,7 @@ humble = { features = ["humble", "build"] }
 
 [pypi-dependencies]
 rich = ">=14.2.0, <15"
+scipy = ">=1.16.3, <2"
 
 ### ROS Humble ####
 [feature.humble]
