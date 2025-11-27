@@ -1,0 +1,17 @@
+ros_topics:
+  - '/franka_robot/left/f_30hz/teleop/twist_stamped'
+  - '/franka_robot/right/f_30hz/teleop/twist_stamped'
+
+  - '/robotiq_gripper/left/f_30hz/robotiq_2f_gripper/confidence_command'
+  - '/robotiq_gripper/right/f_30hz/robotiq_2f_gripper/confidence_command'
+
+  - '/left/franka_robot_state_broadcaster/measured_joint_states'
+  - '/left/franka_robot_state_broadcaster/current_pose'
+  - '/right/franka_robot_state_broadcaster/measured_joint_states'
+  - '/right/franka_robot_state_broadcaster/current_pose'
+
+  - '/robotiq_gripper/left/f_30hz/robotiq_2f_gripper/finger_distance_mm'
+  - '/robotiq_gripper/right/f_30hz/robotiq_2f_gripper/finger_distance_mm'
+
+  - '/wrist_camera_left/D405/color/image_rect_raw/compressed'
+  - '/wrist_camera_right/D405/color/image_rect_raw/compressed'
