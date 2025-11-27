@@ -4,6 +4,22 @@ This workspace provides tools for recording ROS 2 bag files in MCAP format using
 
 ## Install 
 
+```
+pixi shell -e humble
+export ROS_DOMAIN_ID = 100
+ros2 daemon stop
+
+ros2 topic list  # check that you find the topics
+```
+
+## Start teleop
+
+```
+python scripts/mq3_publisher.py
+```
+
+Set the MetaQuest 3 on and be sure to be connected to the wifi. THen move the red axis in point outward of the robot.
+
 ## Recording Scripts
 
 ### 1. Direct Recording Script
