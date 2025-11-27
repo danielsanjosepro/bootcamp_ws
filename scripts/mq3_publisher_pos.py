@@ -202,6 +202,9 @@ class MetaQuest3Publisher(Node):
         # Control flags
         self._enable_orientation_control = False  # Set to True to enable orientation control
 
+        # Axis flip for coordinate alignment (1.0 = same direction, -1.0 = opposite)
+        self._axis_flip = np.array([1.0, -1.0, -1.0])  # [x, y, z] - flip y and z axes
+
         # Store previous errors and time for derivative term (per-arm)
         self._prev_error_left = None
         self._prev_error_right = None
@@ -560,6 +563,9 @@ class MetaQuest3Publisher(Node):
 
         # Transform translation
         transformed_trans = np.dot(rotation_matrix.T, controller_pose.translation)
+
+        # Apply axis flip to correct coordinate alignment
+        transformed_trans = self._axis_flip * transformed_trans
 
         # Transform rotation
         # Convert rotation matrix to scipy Rotation
