@@ -195,11 +195,21 @@ class MetaQuest3Publisher(Node):
         self._kp_angular = 5.0  # Proportional gain for angular motion
         self._kd_angular = 0.05  # Derivative gain for angular motion
 
-        # Store previous errors for derivative term
+        # Velocity limits (safety)
+        self._max_linear_vel = 0.5  # m/s - maximum linear velocity
+        self._max_angular_vel = 1.0  # rad/s - maximum angular velocity
+
+        # Control flags
+        self._enable_orientation_control = False  # Set to True to enable orientation control
+
+        # Store previous errors and time for derivative term (per-arm)
         self._prev_error_left = None
         self._prev_error_right = None
-        self._prev_time = self.get_clock().now()
+        self._prev_time_left = self.get_clock().now()
+        self._prev_time_right = self.get_clock().now()
 
+        # Initialize controller input data
+        self._latest_input_data = None
         input_data = self.mq3.get_controller_data()
         if input_data is not None:
             self._latest_input_data = input_data
@@ -214,8 +224,24 @@ class MetaQuest3Publisher(Node):
         if input_data is not None:
             self._latest_input_data = input_data
 
+    def _saturate_velocity(self, velocity_vec, max_vel):
+        """
+        Saturate a velocity vector to a maximum magnitude.
+
+        Args:
+            velocity_vec: numpy array of velocity
+            max_vel: maximum allowed magnitude
+
+        Returns:
+            numpy array: saturated velocity
+        """
+        magnitude = np.linalg.norm(velocity_vec)
+        if magnitude > max_vel:
+            return velocity_vec * (max_vel / magnitude)
+        return velocity_vec
+
     def compute_twist_from_pose_error(
-        self, target_pose, current_pose, prev_error, side="right"
+        self, target_pose, current_pose, prev_error, prev_time, side="right"
     ):
         """
         Compute twist command using PD controller based on pose error.
@@ -224,60 +250,64 @@ class MetaQuest3Publisher(Node):
             target_pose: Pose object representing desired pose
             current_pose: Pose object representing current robot pose
             prev_error: Previous error for derivative term (Pose object or None)
+            prev_time: Previous time for computing dt
             side: "left" or "right"
 
         Returns:
-            TwistStamped: The computed twist command
+            tuple: (TwistStamped, error_pose, current_time)
         """
         twist = TwistStamped()
         twist.header.stamp = self.get_clock().now().to_msg()
         twist.header.frame_id = f"{side}_link0"
 
-        # Compute pose error (in current pose frame)
-        error_pose = target_pose - current_pose
+        # Compute pose error in base frame (link0)
+        # Translational error: simple difference in base frame
+        error_trans = target_pose.translation - current_pose.translation
+
+        # Rotational error: relative rotation needed
+        error_rot = current_pose.rotation.inv() * target_pose.rotation
+
+        # Create error pose for tracking
+        error_pose = Pose(error_trans, error_rot)
 
         # Compute time delta
         current_time = self.get_clock().now()
-        dt = (current_time - self._prev_time).nanoseconds / 1e9
-        self._prev_time = current_time
+        dt = (current_time - prev_time).nanoseconds / 1e9
 
-        if dt <= 0:
+        if dt <= 0 or dt > 1.0:  # Guard against invalid dt
             dt = 1.0 / self._publish_rate
 
         # Compute derivative term
         if prev_error is not None:
-            error_derivative_trans = (
-                error_pose.translation - prev_error.translation
-            ) / dt
+            error_derivative_trans = (error_trans - prev_error.translation) / dt
             # For rotation, compute angular velocity difference
-            error_rot_diff = prev_error.rotation.inv() * error_pose.rotation
+            error_rot_diff = prev_error.rotation.inv() * error_rot
             error_derivative_rot = error_rot_diff.as_rotvec() / dt
         else:
             error_derivative_trans = np.zeros(3)
             error_derivative_rot = np.zeros(3)
 
-        # Apply PD control law
-        linear_command = (
-            self._kp_linear * error_pose.translation
-            + self._kd_linear * error_derivative_trans
-        )
-        angular_command = (
-            self._kp_angular * error_pose.rotation.as_rotvec()
-            + self._kd_angular * error_derivative_rot
-        )
+        # Apply PD control law (all in base frame)
+        linear_command = self._kp_linear * error_trans + self._kd_linear * error_derivative_trans
+
+        if self._enable_orientation_control:
+            angular_command = self._kp_angular * error_rot.as_rotvec() + self._kd_angular * error_derivative_rot
+        else:
+            angular_command = np.zeros(3)  # Disable orientation control
+
+        # Saturate velocities for safety
+        linear_command = self._saturate_velocity(linear_command, self._max_linear_vel)
+        angular_command = self._saturate_velocity(angular_command, self._max_angular_vel)
 
         # Populate twist message
         twist.twist.linear.x = linear_command[0]
         twist.twist.linear.y = linear_command[1]
         twist.twist.linear.z = linear_command[2]
-        # twist.twist.angular.x = angular_command[0]
-        # twist.twist.angular.y = angular_command[1]
-        # twist.twist.angular.z = angular_command[2]
-        twist.twist.angular.x = 0.0
-        twist.twist.angular.y = 0.0
-        twist.twist.angular.z = 0.0
+        twist.twist.angular.x = angular_command[0]
+        twist.twist.angular.y = angular_command[1]
+        twist.twist.angular.z = angular_command[2]
 
-        return twist, error_pose
+        return twist, error_pose, current_time
 
     def convert_twist(self, input_data, side="right", linear_alpha=1.5, rot_alpha=10.0):
         twist = TwistStamped()
@@ -349,26 +379,18 @@ class MetaQuest3Publisher(Node):
             input_data: Controller data from Meta Quest 3
             side: "left" or "right"
         """
-        # Determine which variables to use based on side
+        # Get hand trigger value
+        hand_trigger = input_data[side]["hand_trigger"]
+
+        # Determine publishers based on side
         if side == self._left_arm_side:
-            teleop_active = self._teleop_active_left
-            controller_ref_pose = self._controller_ref_pose_left
-            robot_ref_pose = self._robot_ref_pose_left
-            latest_robot_pose = self._latest_pose_left
-            prev_error = self._prev_error_left
             publisher = self.twist_publisher_left_
             gripper_pub = self.gripper_left_pub
         else:
-            teleop_active = self._teleop_active_right
-            controller_ref_pose = self._controller_ref_pose_right
-            robot_ref_pose = self._robot_ref_pose_right
-            latest_robot_pose = self._latest_pose_right
-            prev_error = self._prev_error_right
             publisher = self.twist_publisher_right_
             gripper_pub = self.gripper_right_pub
 
-        hand_trigger = input_data[side]["hand_trigger"]
-
+        # Gripper control (index trigger)
         gripper_msg = Float32()
         gripper_msg.data = 1.0 if input_data[side]["index_trigger"] < 0.3 else -1.0
         gripper_pub.publish(gripper_msg)
@@ -376,7 +398,10 @@ class MetaQuest3Publisher(Node):
         # Check if hand trigger is pressed (motion enabler)
         if hand_trigger > 0.7:
             # Capture reference poses when first pressed
-            if not teleop_active:
+            # Check instance variable directly to avoid local variable bug
+            is_active = self._teleop_active_left if side == self._left_arm_side else self._teleop_active_right
+
+            if not is_active:
                 # Get controller pose from input data
                 controller_pos = input_data[side]["pos"]
                 controller_quat = input_data[side]["rot"]
@@ -385,6 +410,8 @@ class MetaQuest3Publisher(Node):
                 )
 
                 # Get robot pose from TF
+                latest_robot_pose = self._latest_pose_left if side == self._left_arm_side else self._latest_pose_right
+
                 if latest_robot_pose is not None:
                     robot_ref_pose = Pose.from_transform_msg(latest_robot_pose)
 
@@ -415,11 +442,12 @@ class MetaQuest3Publisher(Node):
                     return
 
             # Compute and send twist command
-            if (
-                teleop_active
-                and controller_ref_pose is not None
-                and robot_ref_pose is not None
-            ):
+            # Read instance variables directly
+            is_active = self._teleop_active_left if side == self._left_arm_side else self._teleop_active_right
+            controller_ref_pose = self._controller_ref_pose_left if side == self._left_arm_side else self._controller_ref_pose_right
+            robot_ref_pose = self._robot_ref_pose_left if side == self._left_arm_side else self._robot_ref_pose_right
+
+            if is_active and controller_ref_pose is not None and robot_ref_pose is not None:
                 # Get current controller pose
                 controller_pos = input_data[side]["pos"]
                 controller_quat = input_data[side]["rot"]
@@ -439,19 +467,25 @@ class MetaQuest3Publisher(Node):
                 target_robot_pose = robot_ref_pose + delta_controller
 
                 # Get current robot pose
+                latest_robot_pose = self._latest_pose_left if side == self._left_arm_side else self._latest_pose_right
+                prev_error = self._prev_error_left if side == self._left_arm_side else self._prev_error_right
+                prev_time = self._prev_time_left if side == self._left_arm_side else self._prev_time_right
+
                 if latest_robot_pose is not None:
                     current_robot_pose = Pose.from_transform_msg(latest_robot_pose)
 
                     # Compute twist using PD controller
-                    twist, error_pose = self.compute_twist_from_pose_error(
-                        target_robot_pose, current_robot_pose, prev_error, side
+                    twist, error_pose, current_time = self.compute_twist_from_pose_error(
+                        target_robot_pose, current_robot_pose, prev_error, prev_time, side
                     )
 
-                    # Update previous error
+                    # Update previous error and time
                     if side == self._left_arm_side:
                         self._prev_error_left = error_pose
+                        self._prev_time_left = current_time
                     else:
                         self._prev_error_right = error_pose
+                        self._prev_time_right = current_time
 
                     # Publish twist
                     publisher.publish(twist)
@@ -463,7 +497,9 @@ class MetaQuest3Publisher(Node):
                     )
         else:
             # Hand trigger released - reset teleop state and send zero twist
-            if teleop_active:
+            is_active = self._teleop_active_left if side == self._left_arm_side else self._teleop_active_right
+
+            if is_active:
                 if side == self._left_arm_side:
                     self._teleop_active_left = False
                     self._controller_ref_pose_left = None
