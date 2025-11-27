@@ -270,9 +270,12 @@ class MetaQuest3Publisher(Node):
         twist.twist.linear.x = linear_command[0]
         twist.twist.linear.y = linear_command[1]
         twist.twist.linear.z = linear_command[2]
-        twist.twist.angular.x = angular_command[0]
-        twist.twist.angular.y = angular_command[1]
-        twist.twist.angular.z = angular_command[2]
+        # twist.twist.angular.x = angular_command[0]
+        # twist.twist.angular.y = angular_command[1]
+        # twist.twist.angular.z = angular_command[2]
+        twist.twist.angular.x = 0.0
+        twist.twist.angular.y = 0.0
+        twist.twist.angular.z = 0.0
 
         return twist, error_pose
 
@@ -321,9 +324,9 @@ class MetaQuest3Publisher(Node):
         twist.twist.linear.x = delta_pos_transformed[0]
         twist.twist.linear.y = delta_pos_transformed[1]
         twist.twist.linear.z = delta_pos_transformed[2]
-        twist.twist.angular.x = delta_rot_transformed[0]
-        twist.twist.angular.y = delta_rot_transformed[1]
-        twist.twist.angular.z = delta_rot_transformed[2]
+        twist.twist.angular.x = 0.0
+        twist.twist.angular.y = 0.0
+        twist.twist.angular.z = 0.0
         return twist
 
     def send_twist(self, input_data):
