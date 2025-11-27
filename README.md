@@ -5,6 +5,8 @@ This workspace provides tools for recording ROS 2 bag files in MCAP format using
 ## Install 
 
 ```
+mkdir src
+git clone https://github.com/intuitive-robots/SimPublisher.git src/SimPublisher
 pixi shell -e humble
 export ROS_DOMAIN_ID = 100
 ros2 daemon stop
